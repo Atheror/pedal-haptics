@@ -8,8 +8,11 @@ import (
 	"github.com/Atheror/pedal-haptics/internal/protocol"
 )
 
-// sendInterval is the send period to the firmware (100 Hz, see spec §5.1).
-const sendInterval = 10 * time.Millisecond
+// SendInterval is the send period to the firmware (100 Hz, see spec §5.1).
+// Exported because the frame rate bounds what patterns can express: nothing
+// faster than one edge per interval survives, so a pulse train above half
+// this rate aliases into something else entirely.
+const SendInterval = 10 * time.Millisecond
 
 // Pattern is a sequence of frames to emit at regular intervals.
 type Pattern interface {
@@ -22,11 +25,11 @@ type pattern struct {
 }
 
 func (p pattern) Frames() []protocol.Frame { return p.frames }
-func (p pattern) Interval() time.Duration  { return sendInterval }
+func (p pattern) Interval() time.Duration  { return SendInterval }
 
 // steps returns how many frames fit in d.
 func steps(d time.Duration) int {
-	n := int(d / sendInterval)
+	n := int(d / SendInterval)
 	if n < 1 {
 		n = 1
 	}
@@ -79,7 +82,7 @@ func Sweep(ch int, d time.Duration) Pattern {
 // blur together from inertia and feel like continuous buzz (spec §3.2).
 func Pulse(ch int, duty uint8, hz float64, d time.Duration) Pattern {
 	n := steps(d)
-	framesPerCycle := float64(time.Second) / float64(sendInterval) / hz
+	framesPerCycle := float64(time.Second) / float64(SendInterval) / hz
 	frames := make([]protocol.Frame, n)
 	for i := range frames {
 		phase := float64(i) / framesPerCycle
