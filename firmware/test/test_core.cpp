@@ -139,6 +139,14 @@ static void test_overdrive_kick_survives_millis_wraparound() {
     sendFrame(c, 100, 0, 0, near_end);
     CHECK(c.output(0).duty == 255, "the kick should start normally near the wrap");
 
+    // Still BEFORE the wrap, so now_ms is numerically huge. This is the step
+    // that kills the mutant: an absolute `now_ms >= deadline` check compares a
+    // huge now_ms against an already-overflowed deadline (near_end + 20 wraps
+    // to 14) and ends the kick here, 2 ms in instead of 20. Ticking only with
+    // post-wrap values passes under both the broken and the fixed code.
+    c.tick(near_end + 2);
+    CHECK(c.output(0).duty == 255, "the kick must not end 2 ms in");
+
     c.tick(4);  // 10 ms elapsed, across the rollover
     CHECK(c.output(0).duty == 255, "the kick should survive the millis() wrap");
 
@@ -150,6 +158,12 @@ static void test_watchdog_survives_millis_wraparound() {
     HapticsCore c;
     const uint32_t near_end = 0xFFFFFFFFu - 100;
     sendFrame(c, 150, 0, 0, near_end);
+
+    // Still before the wrap. A naive `now_ms > last_frame_ms_ + kWatchdogMs`
+    // would compare a huge now_ms against an overflowed sum and trip here at
+    // 50 ms. Without this step the test passes under that bug too.
+    c.tick(near_end + 50);
+    CHECK(!c.watchdogTripped(), "must not trip 50 ms in, before the wrap");
 
     c.tick(100);  // 201 ms elapsed, across the rollover
     CHECK(!c.watchdogTripped(), "should not trip before 250 ms across the wrap");
