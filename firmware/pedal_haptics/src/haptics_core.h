@@ -10,6 +10,13 @@ static const int      kFrameSize   = 5;
 static const uint8_t  kDutyCap     = 179;  // 70% of 255, see spec §4.3
 static const uint32_t kWatchdogMs  = 250;  // spec §4.2
 static const uint32_t kOverdriveMs = 20;   // spec §3.2
+// Minimum time a channel must sit at duty 0 before another overdrive kick is
+// armed. The kick is the one sanctioned exception to the duty cap (spec §4.3),
+// so re-arming it on every 0->nonzero edge would hand a pulse train a
+// permanent 255: at --pulse 25 the 20 ms kick covers the whole on-phase and
+// the cap is never applied at all. It also keeps the DRV8833 in a fresh inrush
+// on every cycle. A kick only helps a mass that has actually stopped.
+static const uint32_t kMinRestMs = 50;
 
 static const uint8_t kFlagBrakeCh0 = 1 << 0;
 static const uint8_t kFlagBrakeCh1 = 1 << 1;
@@ -75,6 +82,11 @@ public:
                 running_[ch]   = false;
                 kicking_[ch]   = false;
             }
+            // rest_since_ms_ is deliberately not stamped here. A trip means
+            // kWatchdogMs (250 ms) passed with no frame, which already
+            // exceeds kMinRestMs, so the first frame after a trip is entitled
+            // to its kick; and stamping would refresh on every tick while
+            // tripped, so no channel would ever qualify again.
         }
         // Unsigned subtraction, same pattern as the watchdog above: it stays
         // correct across a millis() rollover. An absolute `now_ms >= deadline`
@@ -141,6 +153,8 @@ private:
             running_[ch] = false;
             kicking_[ch] = false;
             kick_start_ms_[ch] = 0;
+            rest_since_ms_[ch] = 0;
+            ever_ran_[ch] = false;
         }
     }
 
@@ -154,16 +168,33 @@ private:
         };
 
         for (int ch = 0; ch < 2; ++ch) {
-            // Kick only when starting from rest, not on every duty change.
+            // Kick only when starting from rest, not on every duty change --
+            // and only when the channel has actually rested long enough for
+            // the mass to stop. Unsigned subtraction, same pattern as the
+            // watchdog and the kick timeout: `now_ms >= since + kMinRestMs`
+            // would break across a millis() rollover.
             if (duty[ch] > 0 && !running_[ch]) {
-                kicking_[ch]       = true;
-                kick_start_ms_[ch] = now_ms;
+                const bool rested =
+                    !ever_ran_[ch] || now_ms - rest_since_ms_[ch] >= kMinRestMs;
+                if (rested) {
+                    kicking_[ch]       = true;
+                    kick_start_ms_[ch] = now_ms;
+                }
             }
             if (duty[ch] == 0) {
                 kicking_[ch] = false;
+                // Stamp only the transition into rest. Refreshing on every
+                // frame at 0 would push the deadline forever and no channel
+                // would ever qualify.
+                if (running_[ch]) {
+                    rest_since_ms_[ch] = now_ms;
+                }
             }
             requested_[ch] = duty[ch];
             running_[ch]   = duty[ch] > 0;
+            if (duty[ch] > 0) {
+                ever_ran_[ch] = true;
+            }
         }
     }
 
@@ -178,4 +209,6 @@ private:
     bool     running_[2];
     bool     kicking_[2];
     uint32_t kick_start_ms_[2];
+    uint32_t rest_since_ms_[2];  // when the channel last dropped to duty 0
+    bool     ever_ran_[2];       // false = never ran, eligible to kick at once
 };

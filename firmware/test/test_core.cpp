@@ -84,6 +84,81 @@ static void test_no_kick_when_already_running() {
     CHECK(c.output(0).duty == 120, "should not kick if it was already running");
 }
 
+static void test_kick_not_rearmed_inside_the_rest_window() {
+    HapticsCore c;
+    sendFrame(c, 100, 0, 0, 1000);
+    CHECK(c.output(0).duty == 255, "the first start from rest kicks");
+    c.tick(1000 + kOverdriveMs + 1);
+    CHECK(c.output(0).duty == 100, "the kick ends after kOverdriveMs");
+
+    sendFrame(c, 0, 0, 0, 1030);            // drops to rest here
+    c.tick(1030);
+    sendFrame(c, 100, 0, 0, 1040);          // back on 10 ms later, < kMinRestMs
+    c.tick(1040);
+    CHECK(c.output(0).duty == 100, "10 ms of rest must not re-arm the kick");
+}
+
+static void test_kick_rearms_after_enough_rest() {
+    HapticsCore c;
+    sendFrame(c, 100, 0, 0, 1000);
+    CHECK(c.output(0).duty == 255, "the first start from rest kicks");
+    c.tick(1000 + kOverdriveMs + 1);
+
+    sendFrame(c, 0, 0, 0, 1030);            // drops to rest here
+    c.tick(1030);
+    sendFrame(c, 100, 0, 0, 1030 + kMinRestMs);
+    c.tick(1030 + kMinRestMs);
+    CHECK(c.output(0).duty == 255, "a full kMinRestMs of rest re-arms the kick");
+}
+
+static void test_pulse_train_cannot_defeat_the_duty_cap() {
+    HapticsCore c;
+    // `--pulse 25 --duty 179` at the 100 Hz frame rate: 2 frames on, 2 off.
+    // Re-arming on every 0->nonzero edge made the 20 ms kick cover the entire
+    // on-phase, so the motor saw an uncapped 255 for half the run and the cap
+    // of spec §4.3 was bypassed with no bug anywhere in sight.
+    int over_cap = 0;
+    uint32_t t = 1000;
+    for (int cycle = 0; cycle < 10; ++cycle) {
+        for (int i = 0; i < 2; ++i) {
+            sendFrame(c, kDutyCap, 0, 0, t);
+            c.tick(t);
+            if (c.output(0).duty > kDutyCap) ++over_cap;
+            t += 10;
+        }
+        for (int i = 0; i < 2; ++i) {
+            sendFrame(c, 0, 0, 0, t);
+            c.tick(t);
+            t += 10;
+        }
+    }
+    // Exactly the two frames of the very first kick, and nothing after: the
+    // 20 ms off-phase never reaches kMinRestMs.
+    CHECK(over_cap == 2, "only the first on-phase may exceed the duty cap");
+}
+
+static void test_rest_window_survives_millis_wraparound() {
+    HapticsCore c;
+    const uint32_t near_end = 0xFFFFFFFFu - 20;
+    sendFrame(c, 100, 0, 0, near_end);
+    c.tick(near_end + 1);
+    sendFrame(c, 0, 0, 0, near_end + 2);   // drops to rest 2 ms before the wrap
+    c.tick(near_end + 2);
+
+    // 10 ms of rest, across the rollover. An absolute
+    // `now_ms >= rest_since + kMinRestMs` check compares a small post-wrap
+    // now_ms against a sum that also wrapped, and would wrongly re-arm here.
+    sendFrame(c, 100, 0, 0, 8);
+    c.tick(8);
+    CHECK(c.output(0).duty == 100, "10 ms across the wrap is still not rested");
+
+    sendFrame(c, 0, 0, 0, 18);
+    c.tick(18);
+    sendFrame(c, 100, 0, 0, 18 + kMinRestMs);
+    c.tick(18 + kMinRestMs);
+    CHECK(c.output(0).duty == 255, "a real rest across the wrap still kicks");
+}
+
 static void test_watchdog_trips_after_timeout() {
     HapticsCore c;
     sendFrame(c, 150, 150, 0, 1000);
@@ -234,6 +309,10 @@ int main() {
     test_duty_below_cap_passes_through();
     test_overdrive_kick_on_start_from_rest();
     test_no_kick_when_already_running();
+    test_kick_not_rearmed_inside_the_rest_window();
+    test_kick_rearms_after_enough_rest();
+    test_pulse_train_cannot_defeat_the_duty_cap();
+    test_rest_window_survives_millis_wraparound();
     test_watchdog_trips_after_timeout();
     test_watchdog_recovers_on_new_frame();
     test_zero_duty_brakes_not_coasts();
