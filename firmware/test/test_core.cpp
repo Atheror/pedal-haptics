@@ -137,6 +137,26 @@ static void test_pulse_train_cannot_defeat_the_duty_cap() {
     CHECK(over_cap == 2, "only the first on-phase may exceed the duty cap");
 }
 
+static void test_watchdog_trip_starts_the_rest_window() {
+    HapticsCore c;
+    // A tripped watchdog is itself a drop to rest, and not before: right up to
+    // the trip the channel was still driving its last duty.
+    sendFrame(c, 100, 0, 0, 1000);
+    const uint32_t trip = 1000 + kWatchdogMs + 1;
+    c.tick(trip);
+    CHECK(c.watchdogTripped(), "precondition: the watchdog tripped");
+
+    sendFrame(c, 100, 0, 0, trip + 10);   // 10 ms after the mass was braked
+    c.tick(trip + 10);
+    CHECK(c.output(0).duty == 100, "recovering 10 ms after the trip must not kick");
+
+    sendFrame(c, 0, 0, 0, trip + 20);
+    c.tick(trip + 20);
+    sendFrame(c, 100, 0, 0, trip + 20 + kMinRestMs);
+    c.tick(trip + 20 + kMinRestMs);
+    CHECK(c.output(0).duty == 255, "a full rest window after that does kick");
+}
+
 static void test_rest_window_survives_millis_wraparound() {
     HapticsCore c;
     const uint32_t near_end = 0xFFFFFFFFu - 20;
@@ -312,6 +332,7 @@ int main() {
     test_kick_not_rearmed_inside_the_rest_window();
     test_kick_rearms_after_enough_rest();
     test_pulse_train_cannot_defeat_the_duty_cap();
+    test_watchdog_trip_starts_the_rest_window();
     test_rest_window_survives_millis_wraparound();
     test_watchdog_trips_after_timeout();
     test_watchdog_recovers_on_new_frame();

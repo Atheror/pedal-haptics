@@ -76,17 +76,20 @@ public:
     // Advances time: watchdog and end of overdrive.
     void tick(uint32_t now_ms) {
         if (now_ms - last_frame_ms_ > kWatchdogMs) {
-            tripped_ = true;
             for (int ch = 0; ch < 2; ++ch) {
+                // The trip is itself a drop to rest: until this moment the
+                // channels were still driving the last duty they were given.
+                // Stamp on the transition only -- stamping on every tick while
+                // tripped would push the deadline forever and no channel would
+                // ever be eligible to kick again.
+                if (!tripped_ && running_[ch]) {
+                    rest_since_ms_[ch] = now_ms;
+                }
                 requested_[ch] = 0;
                 running_[ch]   = false;
                 kicking_[ch]   = false;
             }
-            // rest_since_ms_ is deliberately not stamped here. A trip means
-            // kWatchdogMs (250 ms) passed with no frame, which already
-            // exceeds kMinRestMs, so the first frame after a trip is entitled
-            // to its kick; and stamping would refresh on every tick while
-            // tripped, so no channel would ever qualify again.
+            tripped_ = true;
         }
         // Unsigned subtraction, same pattern as the watchdog above: it stays
         // correct across a millis() rollover. An absolute `now_ms >= deadline`
