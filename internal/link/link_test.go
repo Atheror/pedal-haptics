@@ -3,6 +3,7 @@ package link
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Atheror/pedal-haptics/internal/protocol"
 )
@@ -29,6 +30,37 @@ func TestHandshakeRejectsUnknownFirmware(t *testing.T) {
 func TestHandshakeRejectsSilence(t *testing.T) {
 	if _, err := New(NewFake("")); !errors.Is(err, ErrHandshake) {
 		t.Errorf("err = %v, want ErrHandshake", err)
+	}
+}
+
+func TestHandshakeGivesUpOnTimingOutPort(t *testing.T) {
+	// A serial port with a read timeout returns (0, nil) when it expires.
+	// readLine must give up instead of spinning forever against a mute board.
+	// This is the whole reason readLine exists rather than bufio.ReadString.
+	f := NewFake("PH1 0.1.0 179\n")
+	f.EmptyReads = 100
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := New(f)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrHandshake) {
+			t.Errorf("err = %v, want ErrHandshake", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("New() hung on a port that keeps timing out")
+	}
+}
+
+func TestHandshakeRejectsMalformedDutyCap(t *testing.T) {
+	for _, reply := range []string{"PH1 0.1.0 xyz\n", "PH1 0.1.0 999\n"} {
+		if _, err := New(NewFake(reply)); !errors.Is(err, ErrHandshake) {
+			t.Errorf("reply %q: err = %v, want ErrHandshake", reply, err)
+		}
 	}
 }
 

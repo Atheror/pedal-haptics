@@ -14,6 +14,11 @@ type Fake struct {
 	Closed  bool
 	// WriteErr, if not nil, is returned on every Write.
 	WriteErr error
+	// EmptyReads, if > 0, makes Read return (0, nil) that many times before
+	// serving reply. A real serial port does this when its read timeout
+	// expires while the board stays mute -- bytes.Reader never does, so
+	// without this knob readLine's give-up path is unreachable from tests.
+	EmptyReads int
 }
 
 func NewFake(reply string) *Fake {
@@ -21,6 +26,10 @@ func NewFake(reply string) *Fake {
 }
 
 func (f *Fake) Read(p []byte) (int, error) {
+	if f.EmptyReads > 0 {
+		f.EmptyReads--
+		return 0, nil
+	}
 	return f.reply.Read(p)
 }
 
