@@ -3,10 +3,10 @@ CXXFLAGS = -std=c++17 -Wall -Wextra -Werror -g
 test: test_core
 	./test_core
 
-test_core: test_core.cpp ../src/haptics_core.h
+test_core: test_core.cpp ../pedal_haptics/src/haptics_core.h
 	$(CXX) $(CXXFLAGS) -o $@ test_core.cpp
 
 clean:
-	rm -f test_core
+	rm -rf test_core test_core.dSYM
 
 .PHONY: test clean

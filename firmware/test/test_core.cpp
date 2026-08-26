@@ -1,5 +1,5 @@
 // Host tests for haptics_core.h. No Arduino, no hardware.
-#include "../src/haptics_core.h"
+#include "../pedal_haptics/src/haptics_core.h"
 #include <cstdio>
 #include <cstdlib>
 

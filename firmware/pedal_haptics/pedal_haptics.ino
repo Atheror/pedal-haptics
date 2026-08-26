@@ -1,6 +1,6 @@
-// pedal-haptics — pin adapter. The logic lives in haptics_core.h.
+// pedal-haptics — pin adapter. The logic lives in src/haptics_core.h.
 // See spec §3.2 (switching scheme) and §3.5 (pinout).
-#include "haptics_core.h"
+#include "src/haptics_core.h"
 
 #define FW_VERSION "0.1.0"
 
