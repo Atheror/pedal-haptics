@@ -126,6 +126,38 @@ static void test_brake_flag_forces_zero() {
     CHECK(c.output(1).duty > 0, "channel 1 should not be affected");
 }
 
+static void test_brake_flag_forces_zero_ch1() {
+    HapticsCore c;
+    sendFrame(c, 200, 200, kFlagBrakeCh1, 1000);
+    CHECK(c.output(1).duty == 0, "the brake flag should zero channel 1");
+    CHECK(c.output(0).duty > 0, "channel 0 should be unaffected");
+}
+
+static void test_overdrive_kick_survives_millis_wraparound() {
+    HapticsCore c;
+    const uint32_t near_end = 0xFFFFFFFFu - 5;  // wraps 6 ms from here
+    sendFrame(c, 100, 0, 0, near_end);
+    CHECK(c.output(0).duty == 255, "the kick should start normally near the wrap");
+
+    c.tick(4);  // 10 ms elapsed, across the rollover
+    CHECK(c.output(0).duty == 255, "the kick should survive the millis() wrap");
+
+    c.tick(19);  // 25 ms elapsed, past kOverdriveMs
+    CHECK(c.output(0).duty == 100, "the kick should end 20 ms after it started");
+}
+
+static void test_watchdog_survives_millis_wraparound() {
+    HapticsCore c;
+    const uint32_t near_end = 0xFFFFFFFFu - 100;
+    sendFrame(c, 150, 0, 0, near_end);
+
+    c.tick(100);  // 201 ms elapsed, across the rollover
+    CHECK(!c.watchdogTripped(), "should not trip before 250 ms across the wrap");
+
+    c.tick(200);  // 301 ms elapsed
+    CHECK(c.watchdogTripped(), "should trip after 250 ms across the wrap");
+}
+
 int main() {
     test_accepts_valid_frame();
     test_rejects_bad_checksum();
@@ -139,6 +171,9 @@ int main() {
     test_zero_duty_brakes_not_coasts();
     test_watchdog_ends_in_coast();
     test_brake_flag_forces_zero();
+    test_brake_flag_forces_zero_ch1();
+    test_overdrive_kick_survives_millis_wraparound();
+    test_watchdog_survives_millis_wraparound();
 
     if (g_failures == 0) {
         std::printf("OK — all tests pass\n");

@@ -50,11 +50,16 @@ public:
             for (int ch = 0; ch < 2; ++ch) {
                 requested_[ch] = 0;
                 running_[ch]   = false;
+                kicking_[ch]   = false;
             }
         }
+        // Unsigned subtraction, same pattern as the watchdog above: it stays
+        // correct across a millis() rollover. An absolute `now_ms >= deadline`
+        // comparison would not -- near UINT32_MAX the deadline itself wraps to
+        // a small value and the kick ends immediately.
         for (int ch = 0; ch < 2; ++ch) {
-            if (kick_until_ms_[ch] != 0 && now_ms >= kick_until_ms_[ch]) {
-                kick_until_ms_[ch] = 0;
+            if (kicking_[ch] && now_ms - kick_start_ms_[ch] >= kOverdriveMs) {
+                kicking_[ch] = false;
             }
         }
     }
@@ -66,7 +71,7 @@ public:
             out.duty = 0;
             return out;
         }
-        if (kick_until_ms_[ch] != 0) {
+        if (kicking_[ch]) {
             out.duty = 255;  // the kick is the only exception to the cap
             return out;
         }
@@ -88,7 +93,8 @@ private:
         for (int ch = 0; ch < 2; ++ch) {
             requested_[ch] = 0;
             running_[ch] = false;
-            kick_until_ms_[ch] = 0;
+            kicking_[ch] = false;
+            kick_start_ms_[ch] = 0;
         }
     }
 
@@ -104,10 +110,11 @@ private:
         for (int ch = 0; ch < 2; ++ch) {
             // Kick only when starting from rest, not on every duty change.
             if (duty[ch] > 0 && !running_[ch]) {
-                kick_until_ms_[ch] = now_ms + kOverdriveMs;
+                kicking_[ch]       = true;
+                kick_start_ms_[ch] = now_ms;
             }
             if (duty[ch] == 0) {
-                kick_until_ms_[ch] = 0;
+                kicking_[ch] = false;
             }
             requested_[ch] = duty[ch];
             running_[ch]   = duty[ch] > 0;
@@ -122,5 +129,6 @@ private:
     uint32_t last_frame_ms_;
     uint8_t  requested_[2];
     bool     running_[2];
-    uint32_t kick_until_ms_[2];
+    bool     kicking_[2];
+    uint32_t kick_start_ms_[2];
 };
