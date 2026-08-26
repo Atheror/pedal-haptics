@@ -46,6 +46,21 @@ func TestSweepGoesUpThenDown(t *testing.T) {
 		t.Errorf("last duty = %d, want 0", last)
 	}
 
+	// The ascending ramp must reach 255 on its own. A global peak check is not
+	// enough: the descending ramp's first sample is 255 by construction, so it
+	// would mask a broken ascending denominator (e.g. i*255/up instead of
+	// i*255/(up-1), which tops out at 229 for up=10).
+	up := len(frames) / 2
+	if frames[up-1].Duty[0] != 255 {
+		t.Errorf("last ascending duty = %d, want 255", frames[up-1].Duty[0])
+	}
+	for i := 1; i < up; i++ {
+		if frames[i].Duty[0] < frames[i-1].Duty[0] {
+			t.Errorf("ascending ramp not monotonic at %d: %d < %d",
+				i, frames[i].Duty[0], frames[i-1].Duty[0])
+		}
+	}
+
 	var peak uint8
 	for _, f := range frames {
 		if f.Duty[0] > peak {
