@@ -10,20 +10,26 @@ import (
 	"go.bug.st/serial"
 
 	"github.com/Atheror/pedal-haptics/internal/link"
+	"github.com/Atheror/pedal-haptics/internal/protocol"
 	"github.com/Atheror/pedal-haptics/internal/testcmd"
 )
 
 const (
 	defaultPort = "/dev/ttyACM0"
+	baudRate    = 115200
 
 	// maxPulseHz is the highest pulse frequency the frame rate can actually
 	// express. One full cycle needs at least two frames -- one on, one off --
 	// so at testcmd.SendInterval (100 Hz) anything above 50 Hz collapses into
-	// a constant hold, and values in between alias down to some unrelated
-	// frequency (--pulse 66 comes out at ~33 Hz). --pulse exists to judge
-	// whether active braking makes pulses feel discrete, so a silent aliasing
-	// artifact there would be misread as a hardware limitation.
+	// a constant hold or aliases down to some unrelated frequency. --pulse
+	// exists to judge whether active braking makes pulses feel discrete, so a
+	// silent aliasing artifact there would be misread as a hardware limit.
 	maxPulseHz = float64(time.Second) / float64(2*testcmd.SendInterval)
+
+	// stopFrames is how many emergency-stop frames `stop` sends, one per
+	// SendInterval. More than one because a single frame lost to noise would
+	// leave the motors running until the 250 ms watchdog caught up.
+	stopFrames = 5
 )
 
 func main() {
@@ -31,28 +37,60 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
+	var err error
 	switch os.Args[1] {
 	case "test":
-		if err := runTest(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
-		}
+		err = runTest(os.Args[2:])
+	case "stop":
+		err = runStop(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
 	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `usage: pedal-haptics test [flags]
+	fmt.Fprintf(os.Stderr, `usage: pedal-haptics <command> [flags]
 
+commands:
+  test    run a test pattern on one channel
+  stop    emergency stop: brake both channels immediately
+
+test flags:
   --port    serial port (default %s)
   --channel 0 = brake, 1 = throttle (default 0)
   --duty    0..255 (default 128); not valid with --sweep
   --ms      duration in milliseconds (default 1000)
   --sweep   0→255→0 ramp instead of constant duty
   --pulse   pulse frequency in Hz, 0 < hz <= %g (omit to disable)
-`, defaultPort, maxPulseHz)
+
+stop flags:
+  --port    serial port (default %s)
+`, defaultPort, maxPulseHz, defaultPort)
+}
+
+// connect opens the port and completes the PH1 handshake. The caller owns the
+// returned Link and must Close it.
+func connect(port string) (*link.Link, error) {
+	p, err := serial.Open(port, &serial.Mode{BaudRate: baudRate})
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", port, err)
+	}
+	// link.New queries the firmware for its PH1 banner; give it some margin.
+	if err := p.SetReadTimeout(2 * time.Second); err != nil {
+		p.Close()
+		return nil, err
+	}
+	l, err := link.New(p)
+	if err != nil {
+		p.Close()
+		return nil, err
+	}
+	return l, nil
 }
 
 func runTest(args []string) error {
@@ -98,21 +136,11 @@ func runTest(args []string) error {
 		return fmt.Errorf("--sweep and --pulse are different patterns; pick one")
 	}
 
-	p, err := serial.Open(*port, &serial.Mode{BaudRate: 115200})
-	if err != nil {
-		return fmt.Errorf("opening %s: %w", *port, err)
-	}
-	defer p.Close()
-
-	// link.New queries the firmware for its PH1 banner; give it some margin.
-	if err := p.SetReadTimeout(2 * time.Second); err != nil {
-		return err
-	}
-
-	l, err := link.New(p)
+	l, err := connect(*port)
 	if err != nil {
 		return err
 	}
+	defer l.Close()
 	fmt.Printf("firmware %s, duty cap %d\n", l.Version(), l.DutyCap())
 
 	d := time.Duration(*ms) * time.Millisecond
@@ -140,5 +168,40 @@ func runTest(args []string) error {
 	// there's no need to send a zero frame, and not sending one verifies along
 	// the way that the watchdog works.
 	fmt.Println("pattern finished; the watchdog should shut off in 250 ms")
+	return nil
+}
+
+// runStop is the emergency stop. Spec §4.1 names it as one of the two reasons
+// the brake bits exist: during bring-up with motors strapped to the pedals,
+// the alternative is Ctrl-C plus 250 ms of watchdog, or pulling the cable.
+func runStop(args []string) error {
+	fs := flag.NewFlagSet("stop", flag.ExitOnError)
+	port := fs.String("port", defaultPort, "serial port")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	l, err := connect(*port)
+	if err != nil {
+		return err
+	}
+	defer l.Close()
+	fmt.Printf("firmware %s, duty cap %d\n", l.Version(), l.DutyCap())
+
+	// Both brake bits, duty 0. The firmware zeroes the channel and holds it
+	// braked; it does not wait for the watchdog.
+	f := protocol.Frame{Flags: protocol.FlagBrakeCh0 | protocol.FlagBrakeCh1}
+	ticker := time.NewTicker(testcmd.SendInterval)
+	defer ticker.Stop()
+	for i := 0; i < stopFrames; i++ {
+		if err := l.Send(f); err != nil {
+			return fmt.Errorf("sending stop frame %d of %d: %w", i+1, stopFrames, err)
+		}
+		<-ticker.C
+	}
+
+	fmt.Printf("sent %d brake frames on both channels over %v; "+
+		"motors braked, and the watchdog holds them there\n",
+		stopFrames, time.Duration(stopFrames)*testcmd.SendInterval)
 	return nil
 }
