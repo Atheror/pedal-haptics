@@ -49,7 +49,7 @@ func TestDecodeRejectsBadPreamble(t *testing.T) {
 	f := Frame{Duty: [2]uint8{5, 5}}
 	b := f.Encode()
 	b[0] = 0x00
-	b[4] = b[0] ^ b[1] ^ b[2] ^ b[3] // checksum válido, preámbulo malo
+	b[4] = b[0] ^ b[1] ^ b[2] ^ b[3] // checksum valid, preamble bad
 	if _, err := Decode(b[:]); err != ErrBadPreamble {
 		t.Errorf("err = %v, want ErrBadPreamble", err)
 	}

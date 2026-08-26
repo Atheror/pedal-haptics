@@ -1,36 +1,36 @@
-// Package protocol implementa el códec de la trama de cable entre el daemon y
-// el firmware RP2040. Ver spec §4.1.
+// Package protocol implements the wire frame codec between the daemon and
+// the RP2040 firmware. See spec §4.1.
 package protocol
 
 import "errors"
 
 const (
-	// Preamble marca el inicio de una trama.
+	// Preamble marks the start of a frame.
 	Preamble byte = 0xA5
-	// FrameSize es el tamaño fijo de una trama en bytes.
+	// FrameSize is the fixed size of a frame in bytes.
 	FrameSize = 5
 )
 
-// Flags de override. El frenado normal es responsabilidad del firmware al
-// detectar duty 0; estos bits fuerzan freno inmediato. Ver spec §4.1.
+// Override flags. Normal braking is the firmware's responsibility when it
+// detects duty 0; these bits force an immediate brake. See spec §4.1.
 const (
 	FlagBrakeCh0 byte = 1 << 0
 	FlagBrakeCh1 byte = 1 << 1
 )
 
 var (
-	ErrShortFrame  = errors.New("protocol: trama incompleta")
-	ErrBadPreamble = errors.New("protocol: preámbulo inválido")
-	ErrBadChecksum = errors.New("protocol: checksum inválido")
+	ErrShortFrame  = errors.New("protocol: incomplete frame")
+	ErrBadPreamble = errors.New("protocol: invalid preamble")
+	ErrBadChecksum = errors.New("protocol: invalid checksum")
 )
 
-// Frame es una orden para los dos canales. Índice 0 = freno, 1 = acelerador.
+// Frame is a command for the two channels. Index 0 = brake, 1 = throttle.
 type Frame struct {
 	Duty  [2]uint8
 	Flags uint8
 }
 
-// Encode serializa la trama con su checksum XOR.
+// Encode serializes the frame with its XOR checksum.
 func (f Frame) Encode() [FrameSize]byte {
 	var b [FrameSize]byte
 	b[0] = Preamble
@@ -41,7 +41,7 @@ func (f Frame) Encode() [FrameSize]byte {
 	return b
 }
 
-// Decode valida y deserializa una trama.
+// Decode validates and deserializes a frame.
 func Decode(b []byte) (Frame, error) {
 	if len(b) < FrameSize {
 		return Frame{}, ErrShortFrame
