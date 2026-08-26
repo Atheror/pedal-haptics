@@ -133,6 +133,52 @@ static void test_brake_flag_forces_zero_ch1() {
     CHECK(c.output(0).duty > 0, "channel 0 should be unaffected");
 }
 
+static void test_query_byte_requests_banner() {
+    HapticsCore c;
+    CHECK(!c.wantsBanner(), "no banner is pending on a fresh core");
+    c.feed(kQueryBanner, 1000);
+    CHECK(c.wantsBanner(), "0x3F between frames should request the banner");
+}
+
+static void test_banner_flag_clears() {
+    HapticsCore c;
+    c.feed(kQueryBanner, 1000);
+    c.clearBanner();
+    CHECK(!c.wantsBanner(), "clearBanner() should consume the request");
+    // And it must not re-arm itself, or the .ino would reprint on every loop().
+    c.feed(0x00, 1010);
+    CHECK(!c.wantsBanner(), "the request must not come back on its own");
+}
+
+static void test_query_byte_midframe_is_frame_data() {
+    HapticsCore c;
+    // 0x3F is a perfectly ordinary duty value. Inside a frame it must be
+    // consumed as frame data, not swallowed as a banner query -- otherwise the
+    // byte would vanish, the frame would desync, and every duty of 63 would
+    // break the stream. This is why the check is gated on buf_len_ == 0.
+    sendFrame(c, kQueryBanner, kQueryBanner, 0, 1000);
+    CHECK(!c.wantsBanner(), "0x3F mid-frame must not request the banner");
+    CHECK(c.framesAccepted() == 1, "the frame carrying 0x3F must still parse");
+    c.tick(1000 + kOverdriveMs + 1);  // let the kick pass
+    CHECK(c.output(0).duty == kQueryBanner, "duty 0x3F should reach channel 0");
+    CHECK(c.output(1).duty == kQueryBanner, "duty 0x3F should reach channel 1");
+}
+
+static void test_query_byte_after_preamble_is_frame_data() {
+    HapticsCore c;
+    // Same point, one step earlier: only the preamble has arrived, so the
+    // parser is mid-frame and this 0x3F is the ch0 duty byte.
+    const uint8_t d0 = kQueryBanner, d1 = 0, flags = 0;
+    c.feed(kPreamble, 1000);
+    c.feed(d0, 1000);
+    CHECK(!c.wantsBanner(), "0x3F right after the preamble is the ch0 duty");
+    c.feed(d1, 1000);
+    c.feed(flags, 1000);
+    c.feed(uint8_t(kPreamble ^ d0 ^ d1 ^ flags), 1000);
+    CHECK(c.framesAccepted() == 1, "the frame should complete normally");
+    CHECK(!c.wantsBanner(), "still no banner request after the frame closes");
+}
+
 static void test_overdrive_kick_survives_millis_wraparound() {
     HapticsCore c;
     const uint32_t near_end = 0xFFFFFFFFu - 5;  // wraps 6 ms from here
@@ -186,6 +232,10 @@ int main() {
     test_watchdog_ends_in_coast();
     test_brake_flag_forces_zero();
     test_brake_flag_forces_zero_ch1();
+    test_query_byte_requests_banner();
+    test_banner_flag_clears();
+    test_query_byte_midframe_is_frame_data();
+    test_query_byte_after_preamble_is_frame_data();
     test_overdrive_kick_survives_millis_wraparound();
     test_watchdog_survives_millis_wraparound();
 

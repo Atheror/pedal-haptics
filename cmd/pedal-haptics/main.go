@@ -65,7 +65,7 @@ func runTest(args []string) error {
 	}
 	defer p.Close()
 
-	// The firmware announces PH1 when the port opens; give it some margin.
+	// link.New queries the firmware for its PH1 banner; give it some margin.
 	if err := p.SetReadTimeout(2 * time.Second); err != nil {
 		return err
 	}

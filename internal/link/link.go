@@ -28,9 +28,23 @@ type Link struct {
 	dutyCap uint8
 }
 
+// QueryBanner asks the firmware to (re)print its identification line.
+// Spec §4.1: the firmware answers "solo al conectar y ante 0x3F".
+const QueryBanner byte = 0x3F
+
 // New opens the link and verifies the handshake. The firmware announces
 // "PH1 <version> <duty_cap>" on connect. See spec §4.1.
+//
+// The query byte is not optional politeness. An RP2040 does not reset when
+// the host opens its CDC port -- unlike an AVR board, where DTR toggles a
+// reset line -- so the firmware's setup() runs once per power cycle and its
+// banner is long gone by the time a second run connects. Without the query,
+// every connection after the first would sit through the read timeouts and
+// fail, and the symptom would look exactly like a flaky cable.
 func New(p Port) (*Link, error) {
+	if _, err := p.Write([]byte{QueryBanner}); err != nil {
+		return nil, fmt.Errorf("%w: sending banner query: %w", ErrHandshake, err)
+	}
 	line, err := readLine(p, 64)
 	if err != nil && line == "" {
 		return nil, fmt.Errorf("%w: no response from device", ErrHandshake)

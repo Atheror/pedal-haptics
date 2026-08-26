@@ -14,6 +14,13 @@ static const uint32_t kOverdriveMs = 20;   // spec §3.2
 static const uint8_t kFlagBrakeCh0 = 1 << 0;
 static const uint8_t kFlagBrakeCh1 = 1 << 1;
 
+// Out-of-band request for the identification banner, spec §4.1: the firmware
+// answers "solo al conectar y ante 0x3F". The RP2040 does not reset when the
+// host opens its CDC port -- unlike an AVR board, where DTR toggles a reset
+// line -- so setup()'s banner is printed once per power cycle and every later
+// connection would find the board mute without this query.
+static const uint8_t kQueryBanner = 0x3F;
+
 struct ChannelOut {
     uint8_t duty;   // 0..255, already capped
     bool    coast;  // true = high impedance; false = active brake if duty==0
@@ -25,8 +32,18 @@ public:
 
     // Feeds a byte received over serial.
     void feed(uint8_t b, uint32_t now_ms) {
-        if (buf_len_ == 0 && b != kPreamble) {
-            return;  // waiting for preamble: discard noise
+        if (buf_len_ == 0) {
+            // Between frames only. Mid-frame a 0x3F byte is a perfectly
+            // ordinary duty, flags or checksum value and must stay frame data,
+            // which is why this is gated on buf_len_ == 0 rather than checked
+            // for every byte.
+            if (b == kQueryBanner) {
+                wants_banner_ = true;
+                return;  // never enters the frame buffer
+            }
+            if (b != kPreamble) {
+                return;  // waiting for preamble: discard noise
+            }
         }
         buf_[buf_len_++] = b;
         if (buf_len_ < kFrameSize) {
@@ -83,12 +100,18 @@ public:
     uint32_t framesRejected() const { return rejected_; }
     bool     watchdogTripped() const { return tripped_; }
 
+    // True when a 0x3F query arrived and the banner has not been reprinted
+    // yet. The .ino prints it and calls clearBanner().
+    bool wantsBanner() const { return wants_banner_; }
+    void clearBanner() { wants_banner_ = false; }
+
 private:
     void reset() {
         buf_len_ = 0;
         accepted_ = 0;
         rejected_ = 0;
         tripped_ = false;
+        wants_banner_ = false;
         last_frame_ms_ = 0;
         for (int ch = 0; ch < 2; ++ch) {
             requested_[ch] = 0;
@@ -126,6 +149,7 @@ private:
     uint32_t accepted_;
     uint32_t rejected_;
     bool     tripped_;
+    bool     wants_banner_;
     uint32_t last_frame_ms_;
     uint8_t  requested_[2];
     bool     running_[2];

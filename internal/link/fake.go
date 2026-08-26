@@ -7,6 +7,10 @@ import (
 
 // Fake is an in-memory Port for tests. It returns `reply` on read and
 // accumulates everything written into Written.
+//
+// Written records every byte, the handshake's QueryBanner included, because
+// that byte is part of what a real port sees. Tests that only care about
+// frames should clear Written after New.
 type Fake struct {
 	mu      sync.Mutex
 	reply   *bytes.Reader

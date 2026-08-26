@@ -64,12 +64,26 @@ func TestHandshakeRejectsMalformedDutyCap(t *testing.T) {
 	}
 }
 
+func TestHandshakeSendsQueryByte(t *testing.T) {
+	// An RP2040 does not reset when the host opens its CDC port, so the
+	// banner from setup() is only ever seen once per power cycle. New must
+	// ask for it explicitly or every run after the first hangs and fails.
+	f := NewFake("PH1 0.1.0 179\n")
+	if _, err := New(f); err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	if len(f.Written) != 1 || f.Written[0] != QueryBanner {
+		t.Errorf("wrote %#v, want exactly [%#x]", f.Written, QueryBanner)
+	}
+}
+
 func TestSendWritesEncodedFrame(t *testing.T) {
 	f := NewFake("PH1 0.1.0 179\n")
 	l, err := New(f)
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
+	f.Written = nil // drop the handshake query; this test is about frames
 	frame := protocol.Frame{Duty: [2]uint8{42, 84}}
 	if err := l.Send(frame); err != nil {
 		t.Fatalf("Send() error: %v", err)

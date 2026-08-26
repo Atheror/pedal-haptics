@@ -32,6 +32,13 @@ static void applyChannel(int ch, ChannelOut out) {
     analogWrite(kIn2[ch], kPwmRange - out.duty);
 }
 
+// Prints the identification line the host parses in its handshake, spec §4.1.
+// Single definition on purpose: setup() and loop() must emit byte-identical
+// banners, or a reconnect would parse differently from a cold boot.
+static void printBanner() {
+    Serial.printf("PH1 %s %u\n", FW_VERSION, (unsigned)kDutyCap);
+}
+
 void setup() {
     for (int ch = 0; ch < 2; ++ch) {
         pinMode(kIn1[ch], OUTPUT);
@@ -48,7 +55,7 @@ void setup() {
 
     Serial.begin(115200);
     while (!Serial) { delay(10); }
-    Serial.printf("PH1 %s %u\n", FW_VERSION, (unsigned)kDutyCap);
+    printBanner();
 }
 
 void loop() {
@@ -57,6 +64,16 @@ void loop() {
     while (Serial.available() > 0) {
         core.feed((uint8_t)Serial.read(), now);
     }
+
+    // Opening the CDC port does not reset an RP2040, so setup()'s banner is
+    // long gone by the time a second host run connects. 0x3F asks for it
+    // again; without this the handshake would only ever succeed once per
+    // power cycle. Spec §4.1.
+    if (core.wantsBanner()) {
+        printBanner();
+        core.clearBanner();
+    }
+
     core.tick(now);
 
     for (int ch = 0; ch < 2; ++ch) {
