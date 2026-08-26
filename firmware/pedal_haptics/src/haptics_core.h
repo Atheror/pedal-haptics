@@ -23,7 +23,13 @@ static const uint8_t kQueryBanner = 0x3F;
 
 struct ChannelOut {
     uint8_t duty;   // 0..255, already capped
-    bool    coast;  // true = high impedance; false = active brake if duty==0
+    // true = high impedance; false = active brake if duty == 0.
+    //
+    // Nothing sets this today: the watchdog brakes (see output()) and duty 0
+    // brakes too. It stays because spec §3.2's stop sequence ends in coast,
+    // and whatever adds that timed hand-off will need this to be an explicit,
+    // deliberate request rather than the watchdog's silent default.
+    bool    coast;
 };
 
 class HapticsCore {
@@ -83,8 +89,25 @@ public:
 
     ChannelOut output(int ch) const {
         ChannelOut out;
-        out.coast = tripped_;
+        out.coast = false;
         if (tripped_) {
+            // Watchdog: active brake (duty 0, no coast), not a coast.
+            //
+            // Spec §4.2 brakes both channels; coasting alone lets the
+            // eccentric mass spin down for ~80 ms against ~10-15 ms braked
+            // (spec §3.2). Braking also keeps the .ino on its ordinary
+            // digitalWrite(IN1, HIGH) + analogWrite(IN2, ...) path: the coast
+            // branch is the only place a digitalWrite lands on a pad that
+            // analogWrite currently owns with no pinMode in between, and if
+            // the pad is still in GPIO_FUNC_PWM that write may never reach
+            // the pin -- leaving IN1 LOW with IN2 still PWM'd, which the
+            // bridge reads as drive in reverse for as long as the board has
+            // power. Exactly what the watchdog exists to prevent. The CLI
+            // deliberately never sends a stop frame, so this runs on every
+            // single invocation.
+            //
+            // Duty 0 unbraked is already the resting state, so this adds no
+            // new steady state, only removes a hazardous one.
             out.duty = 0;
             return out;
         }

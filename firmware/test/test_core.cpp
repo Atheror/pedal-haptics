@@ -112,11 +112,19 @@ static void test_zero_duty_brakes_not_coasts() {
     CHECK(!c.output(0).coast, "duty 0 should brake, not coast");
 }
 
-static void test_watchdog_ends_in_coast() {
+static void test_watchdog_ends_in_brake() {
     HapticsCore c;
-    sendFrame(c, 150, 0, 0, 1000);
+    sendFrame(c, 150, 150, 0, 1000);
     c.tick(1000 + kWatchdogMs + 20);
-    CHECK(c.output(0).coast, "after the watchdog it should end up in coast");
+    CHECK(c.watchdogTripped(), "precondition: the watchdog tripped");
+    // Brake, not coast. Coasting leaves the mass spinning ~80 ms (spec §3.2),
+    // and in the .ino the coast branch is the one that writes digitalWrite
+    // over a pad analogWrite owns -- which can leave the bridge driving in
+    // reverse indefinitely. Braking uses the same pin ops as normal running.
+    for (int ch = 0; ch < 2; ++ch) {
+        CHECK(!c.output(ch).coast, "the watchdog must brake, not coast");
+        CHECK(c.output(ch).duty == 0, "the watchdog must hold duty at 0");
+    }
 }
 
 static void test_brake_flag_forces_zero() {
@@ -229,7 +237,7 @@ int main() {
     test_watchdog_trips_after_timeout();
     test_watchdog_recovers_on_new_frame();
     test_zero_duty_brakes_not_coasts();
-    test_watchdog_ends_in_coast();
+    test_watchdog_ends_in_brake();
     test_brake_flag_forces_zero();
     test_brake_flag_forces_zero_ch1();
     test_query_byte_requests_banner();

@@ -23,6 +23,11 @@ static HapticsCore core;
 // With this inversion, duty 0 leaves the motor braked with no extra logic,
 // which is exactly what we want for crisp pulses.
 static void applyChannel(int ch, ChannelOut out) {
+    // Coast is the one branch that digitalWrites a pad analogWrite owns with
+    // no pinMode in between; if the pad is still in GPIO_FUNC_PWM the write
+    // may not land. Nothing in the core requests it today -- the watchdog
+    // brakes instead -- and whatever adds spec §3.2's brake-then-coast
+    // hand-off must reclaim the pad with pinMode(OUTPUT) first.
     if (out.coast) {
         digitalWrite(kIn1[ch], LOW);
         digitalWrite(kIn2[ch], LOW);
